@@ -58,6 +58,9 @@ MODELS: tuple[ModelSpec, ...] = (
     # 通过 console.x.ai 路由，使用 grok.com SSO token，免费账号可用
     # basic pool 即可（不消耗 grok.com 配额，走 console API 独立配额）
     ModelSpec("grok-4.3-console",                       ModeId.FAST,     Tier.BASIC, Capability.CONSOLE_CHAT, True, "Grok 4.3 (Console)"),
+    ModelSpec("grok-4.3-low",                           ModeId.FAST,     Tier.BASIC, Capability.CONSOLE_CHAT, True, "Grok 4.3 Low Thinking"),
+    ModelSpec("grok-4.3-medium",                        ModeId.FAST,     Tier.BASIC, Capability.CONSOLE_CHAT, True, "Grok 4.3 Medium Thinking"),
+    ModelSpec("grok-4.3-high",                          ModeId.FAST,     Tier.BASIC, Capability.CONSOLE_CHAT, True, "Grok 4.3 High Thinking"),
     ModelSpec("grok-4.20-0309-reasoning-console",       ModeId.FAST,     Tier.BASIC, Capability.CONSOLE_CHAT, True, "Grok 4.20 0309 Reasoning (Console)"),
     ModelSpec("grok-4.20-0309-console",                 ModeId.FAST,     Tier.BASIC, Capability.CONSOLE_CHAT, True, "Grok 4.20 0309 (Console)"),
     ModelSpec("grok-4-console",                         ModeId.FAST,     Tier.BASIC, Capability.CONSOLE_CHAT, True, "Grok 4 (Console)"),

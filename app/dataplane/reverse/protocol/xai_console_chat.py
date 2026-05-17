@@ -45,15 +45,25 @@ from app.platform.config.snapshot import get_config
 # key = grok2api 对外暴露的模型名，value = console.x.ai 实际 model 字段
 CONSOLE_MODELS: dict[str, str] = {
     "grok-4.3-console":                 "grok-4.3",
+    "grok-4.3-low":                     "grok-4.3",
+    "grok-4.3-medium":                  "grok-4.3",
+    "grok-4.3-high":                    "grok-4.3",
     "grok-4.20-0309-reasoning-console": "grok-4.20-0309-reasoning",
     "grok-4.20-0309-console":           "grok-4.20-0309",
     "grok-4-console":                   "grok-4-0",
 }
 
-# 需要附带 reasoning 字段的模型（grok-4.3 需要，grok-4.20 系列不需要）
+# 需要附带 reasoning 字段的模型（grok-4.3 系列需要，grok-4.20 系列不需要）
 _MODELS_WITH_REASONING_FIELD: frozenset[str] = frozenset({
     "grok-4.3",
 })
+
+# 模型名后缀 → 固定 effort 值（优先级高于用户传入的 reasoning_effort）
+_MODEL_FIXED_EFFORT: dict[str, str] = {
+    "grok-4.3-low":    "low",
+    "grok-4.3-medium": "medium",
+    "grok-4.3-high":   "high",
+}
 
 # reasoning effort 映射：OpenAI reasoning_effort → console API effort
 _EFFORT_MAP: dict[str, str] = {
@@ -123,8 +133,8 @@ def build_console_payload(
         if content_blocks:
             input_items.append({"role": api_role, "content": content_blocks})
 
-    # reasoning effort
-    effort = _EFFORT_MAP.get(reasoning_effort or "low", "low")
+    # reasoning effort：模型名固定值优先，其次用户传入，最后默认 low
+    effort = _MODEL_FIXED_EFFORT.get(model) or _EFFORT_MAP.get(reasoning_effort or "low", "low")
 
     # 获取 console 实际模型名
     console_model = CONSOLE_MODELS.get(model, model)
