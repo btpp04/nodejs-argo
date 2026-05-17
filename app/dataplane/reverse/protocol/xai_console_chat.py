@@ -50,6 +50,7 @@ CONSOLE_MODELS: dict[str, str] = {
     "grok-4.3-high":                    "grok-4.3",
     "grok-4.20-0309-reasoning-console": "grok-4.20-0309-reasoning",
     "grok-4.20-0309-console":           "grok-4.20-0309",
+    "grok-4.20-multi-agent-console":    "grok-4.20-multi-agent-0309",
     "grok-4-console":                   "grok-4-0",
 }
 
@@ -63,6 +64,11 @@ _MODEL_FIXED_EFFORT: dict[str, str] = {
     "grok-4.3-low":    "low",
     "grok-4.3-medium": "medium",
     "grok-4.3-high":   "high",
+}
+
+# 特殊 max_output_tokens（默认 1_000_000）
+_MODEL_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "grok-4.20-multi-agent-0309": 2_000_000,
 }
 
 # reasoning effort 映射：OpenAI reasoning_effort → console API effort
@@ -142,7 +148,7 @@ def build_console_payload(
     payload: dict[str, Any] = {
         "model": console_model,
         "input": input_items,
-        "max_output_tokens": 1_000_000,
+        "max_output_tokens": _MODEL_MAX_OUTPUT_TOKENS.get(console_model, 1_000_000),
         "temperature": temperature,
         "top_p": top_p,
         "store": False,
