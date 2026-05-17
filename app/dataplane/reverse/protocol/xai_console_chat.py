@@ -289,6 +289,12 @@ async def stream_console_chat(
         current_event = ""
         try:
             async for raw_line in response.aiter_lines():
+                # curl-cffi 的 aiter_lines 返回 bytes，先解码为 str
+                if isinstance(raw_line, bytes):
+                    try:
+                        raw_line = raw_line.decode("utf-8")
+                    except UnicodeDecodeError:
+                        raw_line = raw_line.decode("utf-8", errors="replace")
                 kind, value = classify_console_line(raw_line)
                 if kind == "event":
                     current_event = value
