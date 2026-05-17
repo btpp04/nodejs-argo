@@ -91,38 +91,66 @@ flowchart LR
 
 ## 快速开始
 
-### 本地部署
+### 本地部署（推荐）
+
+**前置要求**：Python 3.13+，[uv](https://docs.astral.sh/uv/getting-started/installation/) 包管理器
 
 ```bash
 git clone https://github.com/chenyme/grok2api
-cd grok2api
+cd grok2api/grok2api-main/grok2api-main
 cp .env.example .env
 uv sync
 uv run granian --interface asgi --host 0.0.0.0 --port 8000 --workers 1 app.main:app
 ```
 
-### Docker Compose
+服务启动后访问 `http://localhost:8000/admin/login` 进行初始化配置。
+
+### Docker Compose 部署
+
+**前置要求**：Docker & Docker Compose
 
 ```bash
 git clone https://github.com/chenyme/grok2api
-cd grok2api
+cd grok2api/grok2api-main/grok2api-main
 cp .env.example .env
 docker compose up -d
 ```
 
-### Vercel
+查看日志：
+```bash
+docker compose logs -f grok2api
+```
+
+### Docker 单容器部署
+
+```bash
+docker run -d \
+  --name grok2api \
+  -p 8000:8000 \
+  -e LOG_LEVEL=INFO \
+  -e ACCOUNT_STORAGE=local \
+  -v grok2api_data:/app/data \
+  -v grok2api_logs:/app/logs \
+  ghcr.io/chenyme/grok2api:latest
+```
+
+### Vercel 部署
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/chenyme/grok2api&env=LOG_LEVEL,LOG_FILE_ENABLED,DATA_DIR,LOG_DIR,ACCOUNT_STORAGE,ACCOUNT_REDIS_URL,ACCOUNT_MYSQL_URL,ACCOUNT_POSTGRESQL_URL)
 
-### Render
+### Render 部署
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/chenyme/grok2api)
 
-### 首次启动
+### 初始化配置
 
-1. 修改 `app.app_key`
-2. 设置 `app.api_key`
-3. 设置 `app.app_url`（否则图片、视频的链接会 403 无权访问）
+部署完成后，访问 Admin 后台进行以下配置：
+
+1. **修改 `app.app_key`**（Admin 后台登录密钥，默认 `grok2api`）
+2. **设置 `app.api_key`**（API 调用鉴权密钥，为空则不鉴权）
+3. **设置 `app.app_url`**（服务外网地址，用于图片、视频链接返回，否则会 403）
+
+> 💡 **提示**：首次启动时会自动生成 `${DATA_DIR}/config.toml`，可在 Admin 后台实时修改配置。
 
 <br>
 
@@ -148,6 +176,30 @@ docker compose up -d
 | `/v1/*` | `app.api_key` | 为空则不额外鉴权 |
 | `/admin/*` | `app.app_key` | 默认值 `grok2api` |
 | `/webui/*` | `app.webui_enabled`, `app.webui_key` | 默认关闭；`webui_key` 为空则不额外校验 |
+
+<br>
+
+## 账号管理
+
+### 账号类型
+
+| 类型 | 说明 | 支持模型 |
+| :-- | :-- | :-- |
+| **付费账号** | X.AI 官方付费账号 | 所有 `grok-4.20-*` 和 `grok-4.3-beta` 模型 |
+| **免费账号** | 通过 console.x.ai 访问的免费账号 | 所有 `*-console` 模型 |
+
+### 免费账号配置
+
+使用免费账号需要配置 SSO Token 和 CF Clearance：
+
+1. 打开浏览器开发者工具（F12）
+2. 访问 `https://console.x.ai/`
+3. 在 Network 标签中找到任意请求，查看 Cookie：
+   - 复制 `sso` 值
+   - 复制 `cf_clearance` 值
+4. 在 Admin 后台添加账号时，将这两个值填入对应字段
+
+> ⚠️ **安全提示**：SSO Token 和 CF Clearance 是敏感信息，请勿在代码中硬编码或提交到版本控制。建议通过环境变量或密钥管理系统传入。
 
 <br>
 
@@ -189,6 +241,8 @@ docker compose up -d
 | `ACCOUNT_SQL_POOL_RECYCLE` | 连接最大复用时间（秒），超时后自动重连 | `1800` |
 | `CONFIG_LOCAL_PATH` | `local` 模式运行时配置文件路径 | `${DATA_DIR}/config.toml` |
 
+> 💡 **console.x.ai 免费账号**：如使用免费账号，需在 Admin 后台添加账号时提供 SSO Token 和 CF Clearance Cookie。这些值会被安全存储，不会在日志或响应中暴露。
+
 运行时配置也支持 `GROK_` 前缀环境变量覆盖，例如 `GROK_APP_API_KEY` 会覆盖 `app.api_key`，`GROK_FEATURES_STREAM` 会覆盖 `features.stream`。
 
 ### 系统配置项
@@ -226,23 +280,31 @@ docker compose up -d
 
 ### Chat
 
-| 模型名 | mode | tier |
-| :-- | :-- | :-- |
-| `grok-4.20-0309-non-reasoning` | `fast` | `basic` |
-| `grok-4.20-0309` | `auto` | `super` |
-| `grok-4.20-0309-reasoning` | `expert` | `super` |
-| `grok-4.20-0309-non-reasoning-super` | `fast` | `super` |
-| `grok-4.20-0309-super` | `auto` | `super` |
-| `grok-4.20-0309-reasoning-super` | `expert` | `super` |
-| `grok-4.20-0309-non-reasoning-heavy` | `fast` | `heavy` |
-| `grok-4.20-0309-heavy` | `auto` | `heavy` |
-| `grok-4.20-0309-reasoning-heavy` | `expert` | `heavy` |
-| `grok-4.20-multi-agent-0309` | `heavy` | `heavy` |
-| `grok-4.20-fast` | `fast` | `basic`，优先使用高等级账号池 |
-| `grok-4.20-auto` | `auto` | `super`，优先使用高等级账号池 |
-| `grok-4.20-expert` | `expert` | `super`，优先使用高等级账号池 |
-| `grok-4.20-heavy` | `heavy` | `heavy` |
-| `grok-4.3-beta` | `grok-420-computer-use-sa` | `super` |
+| 模型名 | mode | tier | 说明 |
+| :-- | :-- | :-- | :-- |
+| `grok-4.20-0309-non-reasoning` | `fast` | `basic` | |
+| `grok-4.20-0309` | `auto` | `super` | |
+| `grok-4.20-0309-reasoning` | `expert` | `super` | |
+| `grok-4.20-0309-non-reasoning-super` | `fast` | `super` | |
+| `grok-4.20-0309-super` | `auto` | `super` | |
+| `grok-4.20-0309-reasoning-super` | `expert` | `super` | |
+| `grok-4.20-0309-non-reasoning-heavy` | `fast` | `heavy` | |
+| `grok-4.20-0309-heavy` | `auto` | `heavy` | |
+| `grok-4.20-0309-reasoning-heavy` | `expert` | `heavy` | |
+| `grok-4.20-multi-agent-0309` | `heavy` | `heavy` | |
+| `grok-4.20-fast` | `fast` | `basic` | 优先使用高等级账号池 |
+| `grok-4.20-auto` | `auto` | `super` | 优先使用高等级账号池 |
+| `grok-4.20-expert` | `expert` | `super` | 优先使用高等级账号池 |
+| `grok-4.20-heavy` | `heavy` | `heavy` | |
+| `grok-4.3-beta` | `grok-420-computer-use-sa` | `super` | |
+| `grok-4.3-console` | `auto` | `basic` | 🆓 免费账号，reasoning effort 中等 |
+| `grok-4.3-low-console` | `auto` | `basic` | 🆓 免费账号，reasoning effort 低 |
+| `grok-4.3-medium-console` | `auto` | `basic` | 🆓 免费账号，reasoning effort 中等 |
+| `grok-4.3-high-console` | `auto` | `basic` | 🆓 免费账号，reasoning effort 高 |
+| `grok-4.20-0309-reasoning-console` | `expert` | `basic` | 🆓 免费账号，固定 reasoning |
+| `grok-4.20-0309-console` | `auto` | `basic` | 🆓 免费账号 |
+| `grok-4.20-multi-agent-console` | `heavy` | `basic` | 🆓 免费账号，多智能体 |
+| `grok-4-console` | `auto` | `basic` | 🆓 免费账号 |
 
 ### Image
 
@@ -316,7 +378,7 @@ curl http://localhost:8000/v1/models \
 <summary><code>POST /v1/chat/completions</code></summary>
 <br>
 
-对话：
+对话（付费账号）：
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
@@ -326,6 +388,21 @@ curl http://localhost:8000/v1/chat/completions \
     "model": "grok-4.20-auto",
     "stream": true,
     "reasoning_effort": "high",
+    "messages": [
+      {"role":"user","content":"你好"}
+    ]
+  }'
+```
+
+对话（免费账号）：
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $GROK2API_API_KEY" \
+  -d '{
+    "model": "grok-4.3-high-console",
+    "stream": true,
     "messages": [
       {"role":"user","content":"你好"}
     ]
@@ -601,6 +678,26 @@ curl -L http://localhost:8000/v1/videos/<video_id>/content \
 
 <br>
 </details>
+
+<br>
+
+## 更新日志
+
+### v2.0.4.rc4
+
+**新增功能**：
+- ✨ 支持 console.x.ai 免费账号访问，新增 8 个 `*-console` 模型
+- 🔒 升级依赖版本，修复 5 个已知 CVE 漏洞
+- 📦 优化 Docker 镜像构建流程
+
+**改进**：
+- 📖 重写部署文档，新增 Docker 单容器部署方式
+- 🔧 完善账号管理说明，支持免费账号配置
+- 🛡️ 增强 CI/CD 安全检查
+
+**修复**：
+- 🐛 修复 Gitleaks 检测误报
+- 🔐 确保敏感信息不被提交到版本控制
 
 <br>
 
