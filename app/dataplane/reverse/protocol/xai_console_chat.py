@@ -133,8 +133,8 @@ def build_console_payload(
         if content_blocks:
             input_items.append({"role": api_role, "content": content_blocks})
 
-    # reasoning effort：模型名固定值优先，其次用户传入，最后默认 low
-    effort = _MODEL_FIXED_EFFORT.get(model) or _EFFORT_MAP.get(reasoning_effort or "low", "low")
+    # reasoning effort：模型名固定值优先，其次用户传入，最后默认 medium
+    effort = _MODEL_FIXED_EFFORT.get(model) or _EFFORT_MAP.get(reasoning_effort or "medium", "medium")
 
     # 获取 console 实际模型名
     console_model = CONSOLE_MODELS.get(model, model)
