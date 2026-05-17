@@ -38,16 +38,22 @@ from app.platform.config.snapshot import get_config
 
 
 # ---------------------------------------------------------------------------
-# 支持的模型名 → reasoning effort 映射
+# 支持的模型名 → console.x.ai 实际 model 字段映射
 # ---------------------------------------------------------------------------
 
 # console.x.ai 上可用的模型（通过 grok.com SSO 免费访问）
+# key = grok2api 对外暴露的模型名，value = console.x.ai 实际 model 字段
 CONSOLE_MODELS: dict[str, str] = {
-    "grok-4.3": "grok-4.3",
-    "grok-4-0": "grok-4-0",
-    "grok-4": "grok-4-0",
-    "grok-4-reasoning": "grok-4-0",
+    "grok-4.3-console":                 "grok-4.3",
+    "grok-4.20-0309-reasoning-console": "grok-4.20-0309-reasoning",
+    "grok-4.20-0309-console":           "grok-4.20-0309",
+    "grok-4-console":                   "grok-4-0",
 }
+
+# 需要附带 reasoning 字段的模型（grok-4.3 需要，grok-4.20 系列不需要）
+_MODELS_WITH_REASONING_FIELD: frozenset[str] = frozenset({
+    "grok-4.3",
+})
 
 # reasoning effort 映射：OpenAI reasoning_effort → console API effort
 _EFFORT_MAP: dict[str, str] = {
@@ -120,21 +126,27 @@ def build_console_payload(
     # reasoning effort
     effort = _EFFORT_MAP.get(reasoning_effort or "low", "low")
 
+    # 获取 console 实际模型名
+    console_model = CONSOLE_MODELS.get(model, model)
+
     payload: dict[str, Any] = {
-        "model": CONSOLE_MODELS.get(model, model),
+        "model": console_model,
         "input": input_items,
         "max_output_tokens": 1_000_000,
         "temperature": temperature,
         "top_p": top_p,
-        "reasoning": {"effort": effort},
         "store": False,
         "include": ["reasoning.encrypted_content"],
         "stream": stream,
     }
 
+    # 只有 grok-4.3 需要附带 reasoning 字段，grok-4.20 系列不需要
+    if console_model in _MODELS_WITH_REASONING_FIELD:
+        payload["reasoning"] = {"effort": effort}
+
     logger.debug(
-        "console payload built: model={} input_items={} effort={}",
-        model, len(input_items), effort,
+        "console payload built: model={} console_model={} input_items={} has_reasoning={}",
+        model, console_model, len(input_items), console_model in _MODELS_WITH_REASONING_FIELD,
     )
     return payload
 
