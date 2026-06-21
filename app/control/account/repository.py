@@ -79,6 +79,10 @@ class AccountRepository(Protocol):
         """Atomically replace all accounts in a pool."""
         ...
 
+    async def reset_expired_console_windows(self) -> int:
+        """Batch-reset console quotas that are exhausted and expired.  Pushes revision."""
+        ...
+
     async def close(self) -> None:
         """Release database connections / file handles."""
         ...

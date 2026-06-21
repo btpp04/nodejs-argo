@@ -26,7 +26,7 @@ from ..models import (
     AccountRecord,
     RuntimeSnapshot,
 )
-from ..quota_defaults import default_quota_set
+from ..quota_defaults import default_quota_set, BASIC_CONSOLE_LIMIT, BASIC_CONSOLE_WINDOW_SECONDS
 
 _TBL_ACCOUNTS = "accounts"
 _TBL_META     = "account_meta"
@@ -859,6 +859,80 @@ class SqlAccountRepository:
             deleted=deleted,
             revision=upserted_result.revision,
         )
+
+    async def reset_expired_console_windows(self) -> int:
+        """Batch-reset exhausted + expired console quotas via direct SQL."""
+        import json as _json
+        now = now_ms()
+
+        if self._dialect == "postgresql":
+            count_sql = sa.text(
+                "SELECT COUNT(*) FROM accounts"
+                " WHERE status = 'active'"
+                " AND deleted_at IS NULL"
+                " AND (quota_console->>'remaining')::int <= 0"
+                " AND ("
+                "   quota_console->>'reset_at' IS NULL"
+                "   OR (quota_console->>'reset_at')::bigint < :now"
+                " )"
+            )
+            update_sql = sa.text(
+                "UPDATE accounts"
+                " SET quota_console = :reset_json, revision = :rev, updated_at = :now"
+                " WHERE status = 'active'"
+                " AND deleted_at IS NULL"
+                " AND (quota_console->>'remaining')::int <= 0"
+                " AND ("
+                "   quota_console->>'reset_at' IS NULL"
+                "   OR (quota_console->>'reset_at')::bigint < :now"
+                " )"
+            )
+        else:
+            # MySQL
+            count_sql = sa.text(
+                "SELECT COUNT(*) FROM accounts"
+                " WHERE status = 'active'"
+                " AND deleted_at IS NULL"
+                " AND CAST(JSON_EXTRACT(quota_console, '$.remaining') AS SIGNED) <= 0"
+                " AND ("
+                "   JSON_EXTRACT(quota_console, '$.reset_at') IS NULL"
+                "   OR CAST(JSON_EXTRACT(quota_console, '$.reset_at') AS SIGNED) < :now"
+                " )"
+            )
+            update_sql = sa.text(
+                "UPDATE accounts"
+                " SET quota_console = :reset_json, revision = :rev, updated_at = :now"
+                " WHERE status = 'active'"
+                " AND deleted_at IS NULL"
+                " AND CAST(JSON_EXTRACT(quota_console, '$.remaining') AS SIGNED) <= 0"
+                " AND ("
+                "   JSON_EXTRACT(quota_console, '$.reset_at') IS NULL"
+                "   OR CAST(JSON_EXTRACT(quota_console, '$.reset_at') AS SIGNED) < :now"
+                " )"
+            )
+
+        async with self._session() as session:
+            async with session.begin():
+                result = await session.execute(count_sql, {"now": now})
+                count = result.scalar() or 0
+                if count == 0:
+                    return 0
+
+                reset_json = _json.dumps({
+                    "remaining": BASIC_CONSOLE_LIMIT,
+                    "total": BASIC_CONSOLE_LIMIT,
+                    "window_seconds": BASIC_CONSOLE_WINDOW_SECONDS,
+                    "reset_at": None,
+                    "synced_at": now,
+                    "source": 0,
+                })
+                rev = await self._bump_revision(session)
+                result = await session.execute(update_sql, {
+                    "reset_json": reset_json,
+                    "rev": rev,
+                    "now": now,
+                })
+                return result.rowcount or count
 
     async def close(self) -> None:
         """Dispose the SQLAlchemy connection pool."""

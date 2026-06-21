@@ -17,7 +17,7 @@ from ..models import (
     AccountRecord,
     RuntimeSnapshot,
 )
-from ..quota_defaults import default_quota_set
+from ..quota_defaults import default_quota_set, BASIC_CONSOLE_LIMIT, BASIC_CONSOLE_WINDOW_SECONDS
 
 _TBL = "accounts"
 _META = "account_meta"
@@ -537,6 +537,59 @@ class LocalAccountRepository:
                 return AccountMutationResult(
                     upserted=upserted, deleted=deleted, revision=rev
                 )
+
+        async with self._lock:
+            return await asyncio.to_thread(_sync)
+
+    async def reset_expired_console_windows(self) -> int:
+        """Batch-reset exhausted + expired console quotas via direct SQL."""
+        def _sync() -> int:
+            with closing(self._connect()) as conn:
+                now = now_ms()
+                # 先查有多少需要重置的
+                count = conn.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {_TBL}
+                    WHERE status = 'active'
+                      AND deleted_at IS NULL
+                      AND CAST(json_extract(quota_console, '$.remaining') AS INTEGER) <= 0
+                      AND (
+                        json_extract(quota_console, '$.reset_at') IS NULL
+                        OR CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                      )
+                    """,
+                    (now,),
+                ).fetchone()[0]
+                if count == 0:
+                    return 0
+
+                # 从 quota_defaults.py 动态读取，不硬编码
+                reset_json = json.dumps({
+                    "remaining": BASIC_CONSOLE_LIMIT,
+                    "total": BASIC_CONSOLE_LIMIT,
+                    "window_seconds": BASIC_CONSOLE_WINDOW_SECONDS,
+                    "reset_at": None,
+                    "synced_at": now,
+                    "source": 0,
+                })
+                rev = self._bump_revision(conn)
+                conn.execute(
+                    f"""
+                    UPDATE {_TBL}
+                    SET quota_console = ?, revision = ?, updated_at = ?
+                    WHERE status = 'active'
+                      AND deleted_at IS NULL
+                      AND CAST(json_extract(quota_console, '$.remaining') AS INTEGER) <= 0
+                      AND (
+                        json_extract(quota_console, '$.reset_at') IS NULL
+                        OR CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                      )
+                    """,
+                    (reset_json, rev, now, now),
+                )
+                affected = conn.execute("SELECT changes()").fetchone()[0]
+                conn.commit()
+                return affected
 
         async with self._lock:
             return await asyncio.to_thread(_sync)

@@ -413,6 +413,10 @@ class RedisAccountRepository:
             revision=upserted_result.revision,
         )
 
+    async def reset_expired_console_windows(self) -> int:
+        """Redis 后端无 SQL，委托给 refresh.py 的 Python 循环处理。"""
+        return 0
+
     async def close(self) -> None:
         """Close the underlying Redis connection pool."""
         await self._r.aclose()
