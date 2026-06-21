@@ -374,8 +374,11 @@ class LocalAccountRepository:
                 ).fetchall()
                 items: list[AccountRecord] = []
                 deleted: list[str] = []
+                batch_max_rev = 0
                 for row in rows:
                     r = self._row_to_record(row)
+                    if r.revision > batch_max_rev:
+                        batch_max_rev = r.revision
                     if r.is_deleted():
                         deleted.append(r.token)
                     else:
@@ -383,6 +386,7 @@ class LocalAccountRepository:
                 has_more = len(rows) == limit
                 return AccountChangeSet(
                     revision=rev,
+                    batch_max_revision=batch_max_rev,
                     items=items,
                     deleted_tokens=deleted,
                     has_more=has_more,
@@ -542,7 +546,13 @@ class LocalAccountRepository:
             return await asyncio.to_thread(_sync)
 
     async def reset_expired_console_windows(self) -> int:
-        """Batch-reset exhausted + expired console quotas via direct SQL."""
+        """Batch-reset exhausted + expired console quotas via direct SQL.
+
+        处理两种异常情况：
+        1. 老条件：remaining<=0 且 (reset_at IS NULL 或已过期) → 正常配额耗尽恢复
+        2. 新条件 (M6)：reset_at 已过期（即使 remaining>0）→ 异常数据归位
+           （来源：人工 patch、迁移数据、M1 历史副作用等）
+        """
         def _sync() -> int:
             with closing(self._connect()) as conn:
                 now = now_ms()
@@ -552,13 +562,22 @@ class LocalAccountRepository:
                     SELECT COUNT(*) FROM {_TBL}
                     WHERE status = 'active'
                       AND deleted_at IS NULL
-                      AND CAST(json_extract(quota_console, '$.remaining') AS INTEGER) <= 0
                       AND (
-                        json_extract(quota_console, '$.reset_at') IS NULL
-                        OR CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                        (
+                          CAST(json_extract(quota_console, '$.remaining') AS INTEGER) <= 0
+                          AND (
+                            json_extract(quota_console, '$.reset_at') IS NULL
+                            OR CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                          )
+                        )
+                        OR
+                        (
+                          json_extract(quota_console, '$.reset_at') IS NOT NULL
+                          AND CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                        )
                       )
                     """,
-                    (now,),
+                    (now, now),
                 ).fetchone()[0]
                 if count == 0:
                     return 0
@@ -579,13 +598,22 @@ class LocalAccountRepository:
                     SET quota_console = ?, revision = ?, updated_at = ?
                     WHERE status = 'active'
                       AND deleted_at IS NULL
-                      AND CAST(json_extract(quota_console, '$.remaining') AS INTEGER) <= 0
                       AND (
-                        json_extract(quota_console, '$.reset_at') IS NULL
-                        OR CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                        (
+                          CAST(json_extract(quota_console, '$.remaining') AS INTEGER) <= 0
+                          AND (
+                            json_extract(quota_console, '$.reset_at') IS NULL
+                            OR CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                          )
+                        )
+                        OR
+                        (
+                          json_extract(quota_console, '$.reset_at') IS NOT NULL
+                          AND CAST(json_extract(quota_console, '$.reset_at') AS INTEGER) < ?
+                        )
                       )
                     """,
-                    (reset_json, rev, now, now),
+                    (reset_json, rev, now, now, now),
                 )
                 affected = conn.execute("SELECT changes()").fetchone()[0]
                 conn.commit()

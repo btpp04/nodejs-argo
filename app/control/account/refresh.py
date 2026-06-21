@@ -164,7 +164,7 @@ class AccountRefreshService:
         if not active:
             return RefreshResult(checked=len(records))
 
-        concurrency = get_config("account.refresh.usage_concurrency", 50)
+        concurrency = get_config("account.refresh.usage_concurrency", 15)
         results = await run_batch(
             active,
             lambda r: self._refresh_one(r, apply_fallback=True, bootstrap=True),
@@ -211,7 +211,7 @@ class AccountRefreshService:
         if pool is not None:
             records = [r for r in records if r.pool == pool]
 
-        concurrency = get_config("account.refresh.usage_concurrency", 50)
+        concurrency = get_config("account.refresh.usage_concurrency", 15)
         results = await run_batch(
             records,
             lambda r: self._refresh_one(r, apply_fallback=True),
@@ -245,7 +245,7 @@ class AccountRefreshService:
     async def refresh_tokens(self, tokens: list[str]) -> RefreshResult:
         """Explicit refresh for a list of tokens (admin / manual trigger)."""
         records = [r for r in await self._repo.get_accounts(tokens) if is_manageable(r)]
-        concurrency = get_config("account.refresh.usage_concurrency", 50)
+        concurrency = get_config("account.refresh.usage_concurrency", 15)
         results = await run_batch(
             records,
             lambda r: self._refresh_one(r, bootstrap=True),
@@ -557,11 +557,19 @@ class AccountRefreshService:
                 if existing.is_window_expired(now):
                     default = default_quota_window(record.pool, mode_id)
                     if default is not None:
+                        new_remaining = max(0, default.total - 1)  # 本次调用消耗1次
+                        # console (mode_id=5) 阈值轮换策略：reset_at=None，
+                        # 让后续扣减在 remaining<=12 时再启动计时器，与 else 分支一致；
+                        # 非 console 模式保持原行为：首次使用即启动计时器
+                        if mode_id == 5:
+                            reset_at = None
+                        else:
+                            reset_at = now + default.window_seconds * 1000
                         quota_patch[mode_key] = QuotaWindow(
-                            remaining=max(0, default.total - 1),  # 本次调用消耗1次
+                            remaining=new_remaining,
                             total=default.total,
                             window_seconds=default.window_seconds,
-                            reset_at=now + default.window_seconds * 1000,
+                            reset_at=reset_at,
                             synced_at=now,
                             source=QuotaSource.DEFAULT,
                         ).to_dict()

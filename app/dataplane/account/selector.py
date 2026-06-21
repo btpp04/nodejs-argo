@@ -18,7 +18,6 @@ import random
 from typing import Literal
 
 from app.platform.config.snapshot import get_config
-from ..shared.enums import PoolId
 from .table import AccountRuntimeTable
 
 # Scoring weights used by the quota strategy.
@@ -192,10 +191,11 @@ def _maybe_reset_windows(
     pool_id: int,
     now_s: int,
 ) -> None:
-    """Reset expired windows for basic-pool accounts inline (no API call needed)."""
-    if pool_id != int(PoolId.BASIC):
-        return
+    """Reset expired windows inline for any pool (no API call needed).
 
+    L7 修复：原仅对 basic 池生效；扩展到 super/heavy 后，在 refresh scheduler
+    卡死或上游不可达时也能本地兜底重置，避免账号"卡死"在过期窗口。
+    """
     for idx in list(candidates):
         r = reset_col[idx]
         if r == 0 or now_s < r:

@@ -258,7 +258,7 @@ async def lifespan(app: FastAPI):
 
     console_reset_task = asyncio.create_task(
         _console_reset_loop(), name="console-quota-reset"
-    )
+    ) if is_leader else None
 
     logger.info("application startup completed")
     yield
@@ -267,11 +267,12 @@ async def lifespan(app: FastAPI):
     # Shutdown
     # -----------
     logger.info("application shutdown started")
-    console_reset_task.cancel()
-    try:
-        await console_reset_task
-    except asyncio.CancelledError:
-        pass
+    if console_reset_task is not None:
+        console_reset_task.cancel()
+        try:
+            await console_reset_task
+        except asyncio.CancelledError:
+            pass
     sync_task.cancel()
     try:
         await sync_task
