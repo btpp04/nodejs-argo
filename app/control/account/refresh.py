@@ -434,20 +434,60 @@ class AccountRefreshService:
                     now = now_ms()
                     quota_patch: dict[str, dict] = {}
                     window = record.quota_set().get(mode_id)
+                    extra_patch: dict = {}
                     if window is not None:
-                        reset_at = (
-                            window.reset_at
-                            if window.reset_at is not None and window.reset_at > now
-                            else now + max(window.window_seconds, 1) * 1000
-                        )
-                        quota_patch[_MODE_KEYS[mode_id]] = QuotaWindow(
-                            remaining=0,
-                            total=window.total,
-                            window_seconds=window.window_seconds,
-                            reset_at=reset_at,
-                            synced_at=window.synced_at,
-                            source=QuotaSource.ESTIMATED,
-                        ).to_dict()
+                        if mode_id == 5:
+                            # Console 429: 扣减 10 而不是清零，避免一次 429 浪费 19 次配额
+                            # 计时器与阈值机制对齐（remaining <= 12 时才启动）
+                            new_remaining = max(0, window.remaining - 10)
+                            reset_at = window.reset_at
+                            if (
+                                reset_at is None
+                                and new_remaining <= 12
+                                and window.window_seconds > 0
+                            ):
+                                reset_at = now + window.window_seconds * 1000
+                            quota_patch[_MODE_KEYS[mode_id]] = QuotaWindow(
+                                remaining=new_remaining,
+                                total=window.total,
+                                window_seconds=window.window_seconds,
+                                reset_at=reset_at,
+                                synced_at=window.synced_at,
+                                source=QuotaSource.ESTIMATED,
+                            ).to_dict()
+                            # 连续失败 >= 5 次且配额被扣到 0 时，标记为异常
+                            # +1 是因为本次失败还没计入 usage_fail_count
+                            if (
+                                new_remaining <= 0
+                                and record.usage_fail_count + 1 >= 5
+                            ):
+                                extra_patch["status"] = AccountStatus.EXPIRED
+                                extra_patch["state_reason"] = "console_429_threshold_exceeded"
+                                extra_patch["ext_merge"] = {
+                                    **(record.ext or {}),
+                                    "expired_at": now,
+                                    "expired_reason": "console_429_threshold_exceeded",
+                                }
+                                logger.info(
+                                    "account marked expired due to repeated 429: token={}... fail_count={}",
+                                    token[:10],
+                                    record.usage_fail_count + 1,
+                                )
+                        else:
+                            # 非 console 模式保持原有清零逻辑
+                            reset_at = (
+                                window.reset_at
+                                if window.reset_at is not None and window.reset_at > now
+                                else now + max(window.window_seconds, 1) * 1000
+                            )
+                            quota_patch[_MODE_KEYS[mode_id]] = QuotaWindow(
+                                remaining=0,
+                                total=window.total,
+                                window_seconds=window.window_seconds,
+                                reset_at=reset_at,
+                                synced_at=window.synced_at,
+                                source=QuotaSource.ESTIMATED,
+                            ).to_dict()
                     await self._repo.patch_accounts(
                         [
                             AccountPatch(
@@ -455,6 +495,7 @@ class AccountRefreshService:
                                 usage_fail_delta=1,
                                 last_fail_at=now,
                                 last_fail_reason="rate_limited",
+                                **extra_patch,
                                 **quota_patch,
                             )
                         ]
