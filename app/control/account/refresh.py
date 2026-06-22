@@ -451,21 +451,29 @@ class AccountRefreshService:
                                 synced_at=window.synced_at,
                                 source=QuotaSource.ESTIMATED,
                             ).to_dict()
-                            # 累计失败 >= 2 次时标记为 EXPIRED 异常组
-                            # +1 是因为本次失败还没计入 usage_fail_count
-                            if record.usage_fail_count + 1 >= 2:
+                            # Console 专属 429 计数器（独立于 usage_fail_count，
+                            # 避免被 500/网络超时等其他失败干扰）。
+                            # 选项 B：永久累积，不在成功时清零，由管理员手动 clear_failures 重置。
+                            console_429_count = int(
+                                (record.ext or {}).get("console_429_count", 0)
+                            )
+                            new_429_count = console_429_count + 1
+                            ext_merge: dict = {
+                                **(record.ext or {}),
+                                "console_429_count": new_429_count,
+                            }
+                            # 累计 3 次 429 标记为 EXPIRED 异常组
+                            if new_429_count >= 3:
                                 extra_patch["status"] = AccountStatus.EXPIRED
                                 extra_patch["state_reason"] = "console_429_threshold_exceeded"
-                                extra_patch["ext_merge"] = {
-                                    **(record.ext or {}),
-                                    "expired_at": now,
-                                    "expired_reason": "console_429_threshold_exceeded",
-                                }
+                                ext_merge["expired_at"] = now
+                                ext_merge["expired_reason"] = "console_429_threshold_exceeded"
                                 logger.info(
-                                    "account marked expired due to repeated 429: token={}... fail_count={}",
+                                    "account marked expired due to repeated 429: token={}... count={}",
                                     token[:10],
-                                    record.usage_fail_count + 1,
+                                    new_429_count,
                                 )
+                            extra_patch["ext_merge"] = ext_merge
                         else:
                             # 非 console 模式保持原有清零逻辑
                             reset_at = (
