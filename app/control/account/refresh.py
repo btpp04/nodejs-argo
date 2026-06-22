@@ -437,15 +437,11 @@ class AccountRefreshService:
                     extra_patch: dict = {}
                     if window is not None:
                         if mode_id == 5:
-                            # Console 429: 扣减 10 而不是清零，避免一次 429 浪费 19 次配额
-                            # 计时器与阈值机制对齐（remaining <= 12 时才启动）
-                            new_remaining = max(0, window.remaining - 10)
+                            # Console 429: 一次直接清零（扣 20），账号当前窗口不再可用
+                            # 立即启动恢复计时器，窗口结束后由巡检任务重置
+                            new_remaining = 0
                             reset_at = window.reset_at
-                            if (
-                                reset_at is None
-                                and new_remaining <= 12
-                                and window.window_seconds > 0
-                            ):
+                            if reset_at is None and window.window_seconds > 0:
                                 reset_at = now + window.window_seconds * 1000
                             quota_patch[_MODE_KEYS[mode_id]] = QuotaWindow(
                                 remaining=new_remaining,
@@ -455,12 +451,9 @@ class AccountRefreshService:
                                 synced_at=window.synced_at,
                                 source=QuotaSource.ESTIMATED,
                             ).to_dict()
-                            # 连续失败 >= 5 次且配额被扣到 0 时，标记为异常
+                            # 累计失败 >= 2 次时标记为 EXPIRED 异常组
                             # +1 是因为本次失败还没计入 usage_fail_count
-                            if (
-                                new_remaining <= 0
-                                and record.usage_fail_count + 1 >= 5
-                            ):
+                            if record.usage_fail_count + 1 >= 2:
                                 extra_patch["status"] = AccountStatus.EXPIRED
                                 extra_patch["state_reason"] = "console_429_threshold_exceeded"
                                 extra_patch["ext_merge"] = {
