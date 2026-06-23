@@ -453,16 +453,21 @@ class AccountRefreshService:
                             ).to_dict()
                             # Console 专属 429 计数器（独立于 usage_fail_count，
                             # 避免被 500/网络超时等其他失败干扰）。
-                            # 选项 B：永久累积，不在成功时清零，由管理员手动 clear_failures 重置。
-                            console_429_count = int(
-                                (record.ext or {}).get("console_429_count", 0)
-                            )
+                            # 12 小时滑动窗口：距离上次 429 超过 12 小时 → 计数重置为 0
+                            ext_data = record.ext or {}
+                            last_429_at = int(ext_data.get("console_429_last_at", 0))
+                            sliding_window_ms = 12 * 3600 * 1000
+                            if last_429_at > 0 and (now - last_429_at) > sliding_window_ms:
+                                console_429_count = 0
+                            else:
+                                console_429_count = int(ext_data.get("console_429_count", 0))
                             new_429_count = console_429_count + 1
                             ext_merge: dict = {
-                                **(record.ext or {}),
+                                **ext_data,
                                 "console_429_count": new_429_count,
+                                "console_429_last_at": now,
                             }
-                            # 累计 3 次 429 标记为 EXPIRED 异常组
+                            # 12 小时内累计 3 次 429 标记为 EXPIRED 异常组
                             if new_429_count >= 3:
                                 extra_patch["status"] = AccountStatus.EXPIRED
                                 extra_patch["state_reason"] = "console_429_threshold_exceeded"
@@ -643,6 +648,27 @@ class AccountRefreshService:
         count = await self._repo.reset_expired_console_windows()
         if count > 0:
             logger.debug("console quota windows auto-reset: count={}", count)
+        return count
+
+    async def recover_console_expired_accounts(self) -> int:
+        """自动恢复 console 429 EXPIRED 账号（满足条件）。
+
+        恢复条件（AND）：
+        - status = EXPIRED
+        - state_reason = console_429_threshold_exceeded
+        - usage_use_count > 5（有成功调用历史）
+        - expired_at <= now - 1 小时（等待时间够了）
+
+        恢复操作：
+        - status: EXPIRED → ACTIVE
+        - 清理 ext 中的 expired_at / expired_reason / console_429_count / console_429_last_at
+
+        Returns:
+            恢复的账号数量。
+        """
+        count = await self._repo.recover_console_expired_accounts()
+        if count > 0:
+            logger.info("console expired accounts auto-recovered: count={}", count)
         return count
 
 

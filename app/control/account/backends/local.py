@@ -622,6 +622,65 @@ class LocalAccountRepository:
         async with self._lock:
             return await asyncio.to_thread(_sync)
 
+    async def recover_console_expired_accounts(self) -> int:
+        """Auto-recover console 429 EXPIRED accounts with successful history.
+
+        Conditions:
+        - status = 'expired'
+        - state_reason = 'console_429_threshold_exceeded'
+        - usage_use_count > 5
+        - ext.expired_at <= now - 1 hour
+        """
+        def _sync() -> int:
+            with closing(self._connect()) as conn:
+                now = now_ms()
+                recovery_threshold = now - 3600 * 1000
+
+                # 查询符合条件的账号 token 和 ext
+                rows = conn.execute(
+                    f"""
+                    SELECT token, ext FROM {_TBL}
+                    WHERE status = 'expired'
+                      AND deleted_at IS NULL
+                      AND state_reason = 'console_429_threshold_exceeded'
+                      AND usage_use_count > 5
+                      AND CAST(json_extract(ext, '$.expired_at') AS INTEGER) <= ?
+                    """,
+                    (recovery_threshold,),
+                ).fetchall()
+
+                if not rows:
+                    return 0
+
+                rev = self._bump_revision(conn)
+                for row in rows:
+                    token, ext_raw = row
+                    try:
+                        ext = json.loads(ext_raw) if ext_raw else {}
+                    except (ValueError, TypeError):
+                        ext = {}
+                    # 清理 EXPIRED 相关字段
+                    for k in ("expired_at", "expired_reason",
+                              "console_429_count", "console_429_last_at"):
+                        ext.pop(k, None)
+                    conn.execute(
+                        f"""
+                        UPDATE {_TBL}
+                        SET status = 'active',
+                            state_reason = NULL,
+                            ext = ?,
+                            revision = ?,
+                            updated_at = ?
+                        WHERE token = ?
+                        """,
+                        (json.dumps(ext), rev, now, token),
+                    )
+                conn.commit()
+                return len(rows)
+
+        async with self._lock:
+            return await asyncio.to_thread(_sync)
+
     async def close(self) -> None:
         """No-op for SQLite — connections are opened and closed per operation."""
 

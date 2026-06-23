@@ -993,6 +993,79 @@ class SqlAccountRepository:
                 })
                 return result.rowcount or count
 
+    async def recover_console_expired_accounts(self) -> int:
+        """Auto-recover console 429 EXPIRED accounts with successful history.
+
+        Conditions:
+        - status = 'expired'
+        - state_reason = 'console_429_threshold_exceeded'
+        - usage_use_count > 5
+        - ext.expired_at <= now - 1 hour
+        """
+        import json as _json
+        now = now_ms()
+        recovery_threshold = now - 3600 * 1000
+
+        if self._dialect == "postgresql":
+            select_sql = sa.text(
+                "SELECT token, ext FROM accounts"
+                " WHERE status = 'expired'"
+                " AND deleted_at IS NULL"
+                " AND state_reason = 'console_429_threshold_exceeded'"
+                " AND usage_use_count > 5"
+                " AND (ext->>'expired_at')::bigint <= :threshold"
+            )
+        else:
+            # MySQL
+            select_sql = sa.text(
+                "SELECT token, ext FROM accounts"
+                " WHERE status = 'expired'"
+                " AND deleted_at IS NULL"
+                " AND state_reason = 'console_429_threshold_exceeded'"
+                " AND usage_use_count > 5"
+                " AND CAST(JSON_EXTRACT(ext, '$.expired_at') AS SIGNED) <= :threshold"
+            )
+
+        update_sql = sa.text(
+            "UPDATE accounts"
+            " SET status = 'active',"
+            "     state_reason = NULL,"
+            "     ext = :ext_json,"
+            "     revision = :rev,"
+            "     updated_at = :now"
+            " WHERE token = :token"
+        )
+
+        async with self._session() as session:
+            async with session.begin():
+                rows = (await session.execute(
+                    select_sql, {"threshold": recovery_threshold}
+                )).fetchall()
+
+                if not rows:
+                    return 0
+
+                rev = await self._bump_revision(session)
+                count = 0
+                for row in rows:
+                    token = row[0]
+                    ext_raw = row[1]
+                    try:
+                        ext = _json.loads(ext_raw) if ext_raw else {}
+                    except (ValueError, TypeError):
+                        ext = {}
+                    for k in ("expired_at", "expired_reason",
+                              "console_429_count", "console_429_last_at"):
+                        ext.pop(k, None)
+                    await session.execute(update_sql, {
+                        "ext_json": _json.dumps(ext),
+                        "rev": rev,
+                        "now": now,
+                        "token": token,
+                    })
+                    count += 1
+                return count
+
     async def close(self) -> None:
         """Dispose the SQLAlchemy connection pool."""
         if self._dispose_engine:

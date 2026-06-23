@@ -506,6 +506,86 @@ class RedisAccountRepository:
             await self._r.zadd(_KEY_REV_LOG, {token: rev})
         return len(to_reset)
 
+    async def recover_console_expired_accounts(self) -> int:
+        """Auto-recover console 429 EXPIRED accounts with successful history.
+
+        Conditions:
+        - status = 'expired'
+        - state_reason = 'console_429_threshold_exceeded'
+        - usage_use_count > 5
+        - ext.expired_at <= now - 1 hour
+        """
+        now = now_ms()
+        recovery_threshold = now - 3600 * 1000
+
+        # 扫描所有账号
+        keys: list[str] = []
+        async for k in self._r.scan_iter("accounts:record:*"):
+            keys.append(k.decode() if isinstance(k, bytes) else k)
+        if not keys:
+            return 0
+
+        to_recover: list[tuple[str, dict]] = []
+        for key in keys:
+            h = await self._r.hgetall(key)
+            if not h:
+                continue
+
+            def _bget(k: str) -> str:
+                v = h.get(k) or h.get(k.encode())
+                return v.decode() if isinstance(v, bytes) else (v or "")
+
+            status = _bget("status")
+            deleted = _bget("deleted_at")
+            state_reason = _bget("state_reason")
+            if (
+                status != "expired"
+                or deleted
+                or state_reason != "console_429_threshold_exceeded"
+            ):
+                continue
+            try:
+                use_count = int(_bget("usage_use_count") or 0)
+            except (ValueError, TypeError):
+                continue
+            if use_count <= 5:
+                continue
+            ext_raw = _bget("ext")
+            try:
+                ext = json.loads(ext_raw) if ext_raw else {}
+            except (ValueError, TypeError):
+                ext = {}
+            expired_at = ext.get("expired_at")
+            if expired_at is None:
+                continue
+            try:
+                expired_at_int = int(expired_at)
+            except (ValueError, TypeError):
+                continue
+            if expired_at_int > recovery_threshold:
+                continue
+            # 清理 EXPIRED 相关字段
+            for k in ("expired_at", "expired_reason",
+                      "console_429_count", "console_429_last_at"):
+                ext.pop(k, None)
+            token = key.split(":", 2)[-1]
+            to_recover.append((token, ext))
+
+        if not to_recover:
+            return 0
+
+        rev = await self._bump_revision()
+        for token, ext in to_recover:
+            await self._r.hset(_record_key(token), mapping={
+                "status": "active",
+                "state_reason": "",
+                "ext": json.dumps(ext),
+                "revision": str(rev),
+                "updated_at": str(now),
+            })
+            await self._r.zadd(_KEY_REV_LOG, {token: rev})
+        return len(to_recover)
+
     async def close(self) -> None:
         """Close the underlying Redis connection pool."""
         await self._r.aclose()
