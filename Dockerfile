@@ -1,3 +1,4 @@
+# Deploy on Scalingo
 # ── Builder ───────────────────────────────────────────────────────────────────
 FROM python:3.13-alpine AS builder
 
