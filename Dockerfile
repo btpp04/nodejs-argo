@@ -47,6 +47,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SERVER_WORKERS=1
 
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+ENV PORT=${PORT:-8000}
 
 RUN apk add --no-cache \
     tzdata \
@@ -74,4 +75,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD ["sh", "-c", "wget -qO /dev/null http://127.0.0.1:${SERVER_PORT}/health || exit 1"]
 
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
-CMD ["sh", "-c", "exec granian --interface asgi --host ${SERVER_HOST} --port ${SERVER_PORT} --workers ${SERVER_WORKERS} app.main:app"]
+CMD ["sh", "-c", "PORT=${PORT:-${SERVER_PORT:-8000}} && exec granian --interface asgi --host ${SERVER_HOST:-0.0.0.0} --port ${PORT} --workers ${SERVER_WORKERS:-1} app.main:app"]
